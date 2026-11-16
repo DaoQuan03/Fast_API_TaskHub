@@ -1,16 +1,21 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from app.core.config import settings
+
 from app.api.v1.router import api_router
+from app.core.config import settings
+from app.core.exceptions import AppException, app_exception_handler
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup event
-    print(f"Starting up {settings.PROJECT_NAME}...")
+    logger.info("Starting up %s...", settings.PROJECT_NAME)
     yield
     # Shutdown event
-    print(f"Shutting down {settings.PROJECT_NAME}...")
+    logger.info("Shutting down %s...", settings.PROJECT_NAME)
 
 
 app = FastAPI(
@@ -21,14 +26,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_exception_handler(AppException, app_exception_handler)
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
-@app.get("/healthy", tags=["system"])
+@app.get("/healthy", tags=["system"], summary="Health check")
 async def healthy_check():
     return {
         "status": "Healthy",
         "message": "ok",
         "version": "1.0.0",
     }
-

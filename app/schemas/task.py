@@ -1,48 +1,83 @@
-from datetime import datetime
-from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime, timezone
+from pydantic import Field, field_validator, model_validator
 
+from app.core.constants import TASK_TITLE_MAX_LENGTH, TASK_TITLE_MIN_LENGTH
+from app.core.messages import DUE_DATE_IN_PAST,FIELD_CANNOT_BE_NULL
+from app.models.enums import TaskPriority, TaskStatus
+from app.schemas.base import BaseSchema
 
-class TaskStatus(str, Enum):
-    TODO = "TODO"
-    IN_PROGRESS = "IN_PROGRESS"
-    IN_REVIEW = "IN_REVIEW"
-    DONE = "DONE"
+def _validate_due_date_not_pass(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    now = datetime.now(timezone.utc)
+    compare_val = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if compare_val < now:
+        raise ValueError(DUE_DATE_IN_PAST)
+    return value
 
-
-class TaskPriority(str, Enum):
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-    URGENT = "URGENT"
-
-
-class TaskBase(BaseModel):
-    title: str = Field(..., min_length=1, max_length=255, description="Tiêu đề task")
-    status: TaskStatus = Field(default=TaskStatus.TODO, description="Trạng thái task")
-    priority: TaskPriority = Field(default=TaskPriority.MEDIUM, description="Mức độ ưu tiên")
-    due_date: datetime | None = Field(default=None, description="Hạn chót hoàn thành")
-    project_id: int | None = Field(default=None, description="ID dự án liên kết")
-    assignee_id: int | None = Field(default=None, description="ID người được phân công")
-
+class TaskBase(BaseSchema):
+    title: str = Field(
+        ...,
+        min_length = TASK_TITLE_MIN_LENGTH,
+        max_length = TASK_TITLE_MAX_LENGTH,
+        description = "Tieu de"
+    )
+    priority: TaskPriority = Field(
+        default = TaskPriority.MEDIUM,
+        description = "Muc do uu tien"
+    )
+    due_date: datetime | None = Field(
+        default = None,
+        description = "Dealine"
+    )
+    project_id: int | None = Field(
+        default = None,
+        description="ID cua du an"
+    )
+    assignee_id: int | None = Field(
+        default = None,
+        description="ID cua nguoi duoc giao viec"
+    )
 
 class TaskCreate(TaskBase):
-    created_by: int | None = Field(default=None, description="ID người tạo task")
+    @field_validator("due_date")
+    @classmethod
+    def check_due_date(cls, value: datetime | None) -> datetime | None:
+        return _validate_due_date_not_pass(value)
 
+class TaskUpdate(BaseSchema):
+    title: str | None = Field(
+        default = None,
+        min_length = TASK_TITLE_MIN_LENGTH,
+        max_length = TASK_TITLE_MAX_LENGTH,
+        description = "Tieu de cua task"
+    )
+    status: TaskStatus | None = Field(default = None, description = "Trang thai task")
+    priority: TaskPriority | None = Field(default=None, description = "Muc do uu tien")
+    due_date: datetime | None = Field(default = None, description = "dealine")
+    assignee_id: int | None = Field(default = None, description = "ID nguoi duoc phan cong")
+    project_id: int | None = Field(default = None, description = "ID du an")
 
-class TaskUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=255, description="Tiêu đề task")
-    status: TaskStatus | None = Field(default=None, description="Trạng thái task")
-    priority: TaskPriority | None = Field(default=None, description="Mức độ ưu tiên")
-    due_date: datetime | None = Field(default=None, description="Hạn chót hoàn thành")
-    project_id: int | None = Field(default=None, description="ID dự án liên kết")
-    assignee_id: int | None = Field(default=None, description="ID người được phân công")
-
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_for_non_nullable_feilds(cls, data: object) -> object:
+        if isinstance(data, dict):
+            for field in ("title", "status", "priority"):
+                if field in data and data[field] is None:
+                    raise ValueError(FIELD_CANNOT_BE_NULL.format(field=field))
+        return data
+    
+    @field_validator("due_date")
+    @classmethod
+    def check_due_date(cls, value: datetime | None) -> datetime | None :
+        return _validate_due_date_not_pass(value)
 
 class TaskResponse(TaskBase):
     id: int
-    created_by: int | None = None
+    status: TaskStatus = Field(default = TaskStatus.TODO, description = "Trang thai cua task")
+    created_by : int | None = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
-
+class TaskListResponse(BaseSchema):
+    items: list[TaskResponse]
+    total: int
