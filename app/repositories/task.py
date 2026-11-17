@@ -1,58 +1,32 @@
-from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated
+from fastapi import Depends
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import TaskStatus
+from app.core.database import get_db
+from app.models.task import Task
+from app.repositories.base import BaseRepository
 
 
-class TaskRepository:
-    def __init__(self) -> None:
-        self._tasks: dict[int, dict[str, Any]] = {}
-        self._id_counter = 1
+class TaskRepository(BaseRepository[Task]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(Task, session)
 
-    def create(self, data: dict[str, Any]) -> dict[str, Any]:
-        task_id = self._id_counter
-        self._id_counter += 1
-        now = datetime.now(timezone.utc)
-        task = {
-            "id": task_id,
-            "status": TaskStatus.TODO,
-            "created_by": None,
-            **data,
-            "created_at": data.get("created_at") or now,
-        }
-        self._tasks[task_id] = task
-        return task
-
-    def get_all(self) -> tuple[list[dict[str, Any]], int]:
-        items = sorted(
-            self._tasks.values(),
-            key=lambda t: (t["created_at"], t["id"]),
+    async def get_multi(
+        self, *, page: int = 1, limit: int = 20
+    ) -> tuple[list[Task], int]:
+        total = await self.session.scalar(select(func.count()).select_from(Task))
+        stmt = (
+            select(Task)
+            .order_by(Task.created_at.asc(), Task.id.asc())
+            .offset((page - 1) * limit)
+            .limit(limit)
         )
-        return items, len(items)
-
-    def get_by_id(self, task_id: int) -> dict[str, Any] | None:
-        return self._tasks.get(task_id)
-
-    def update(self, task_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
-        task = self._tasks.get(task_id)
-        if not task:
-            return None
-        task.update(data)
-        self._tasks[task_id] = task
-        return task
-
-    def delete(self, task_id: int) -> bool:
-        if task_id in self._tasks:
-            del self._tasks[task_id]
-            return True
-        return False
-
-    def clear(self) -> None:
-        self._tasks.clear()
-        self._id_counter = 1
+        result = await self.session.scalars(stmt)
+        return list(result.all()), total or 0
 
 
-_task_repository = TaskRepository()
-
-
-def get_task_repository() -> TaskRepository:    return _task_repository
+def get_task_repository(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskRepository:
+    return TaskRepository(session=session)

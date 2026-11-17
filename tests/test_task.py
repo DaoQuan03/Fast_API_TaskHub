@@ -1,17 +1,52 @@
+from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
+from app.core.database import Base, get_db
 from app.main import app
-from app.repositories.task import get_task_repository
+
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+test_engine = create_async_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = async_sessionmaker(
+    bind=test_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+
+async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with TestingSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+app.dependency_overrides[get_db] = override_get_db
 
 
 @pytest.fixture(autouse=True)
-def reset_repository():
-    repo = get_task_repository()
-    repo.clear()
+def setup_test_db():
+    import asyncio
+
+    async def _reset():
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_reset())
     yield
-    repo.clear()
 
 
 @pytest.fixture
@@ -40,11 +75,9 @@ def test_create_task_success(client: TestClient):
 
 
 def test_create_task_validation_422(client: TestClient):
-    # Case 1: Title toàn dấu cách -> bị str_strip_whitespace cắt thành rỗng -> 422
     res_whitespace = client.post("/api/v1/tasks", json={"title": "     "})
     assert res_whitespace.status_code == 422
 
-    # Case 2: due_date ở quá khứ -> 422
     past_date = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     res_past = client.post(
         "/api/v1/tasks",
@@ -53,14 +86,15 @@ def test_create_task_validation_422(client: TestClient):
     assert res_past.status_code == 422
 
 
-def test_list_tasks_and_sorting(client: TestClient):
+def test_list_tasks_pagination_and_sorting(client: TestClient):
     client.post("/api/v1/tasks", json={"title": "Task 1"})
     client.post("/api/v1/tasks", json={"title": "Task 2"})
+    client.post("/api/v1/tasks", json={"title": "Task 3"})
 
-    response = client.get("/api/v1/tasks")
+    response = client.get("/api/v1/tasks?page=1&limit=2")
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 2
+    assert data["total"] == 3
     assert len(data["items"]) == 2
     assert [item["id"] for item in data["items"]] == [1, 2]
 
@@ -82,7 +116,6 @@ def test_update_task_success_404_and_422(client: TestClient):
     create_res = client.post("/api/v1/tasks", json={"title": "Old Title"})
     task_id = create_res.json()["id"]
 
-    # Case 1: PATCH hợp lệ
     res_ok = client.patch(
         f"/api/v1/tasks/{task_id}",
         json={"title": "  New Title  ", "status": "IN_PROGRESS"},
@@ -91,12 +124,10 @@ def test_update_task_success_404_and_422(client: TestClient):
     assert res_ok.json()["title"] == "New Title"
     assert res_ok.json()["status"] == "IN_PROGRESS"
 
-    # Case 2: Gửi null cho các trường bắt buộc -> trả về 422
     for field in ("title", "status", "priority"):
         res_null = client.patch(f"/api/v1/tasks/{task_id}", json={field: None})
         assert res_null.status_code == 422
 
-    # Case 3: Task không tồn tại -> trả về 404
     res_404 = client.patch("/api/v1/tasks/999", json={"title": "Valid"})
     assert res_404.status_code == 404
 
@@ -108,6 +139,5 @@ def test_delete_task_success_and_404(client: TestClient):
     res_del = client.delete(f"/api/v1/tasks/{task_id}")
     assert res_del.status_code == 204
 
-    # Xóa lại lần nữa phải báo 404
     res_404 = client.delete(f"/api/v1/tasks/{task_id}")
     assert res_404.status_code == 404
