@@ -3,6 +3,7 @@ from fastapi import Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import DEFAULT_PAGE, DEFAULT_LIMIT, MAX_LIMIT
 from app.core.database import get_db
 from app.models.task import Task
 from app.repositories.base import BaseRepository
@@ -13,7 +14,7 @@ class TaskRepository(BaseRepository[Task]):
         super().__init__(Task, session)
 
     async def get_multi(
-        self, *, page: int = 1, limit: int = 20
+        self, *, page: int = DEFAULT_PAGE, limit: int = DEFAULT_LIMIT
     ) -> tuple[list[Task], int]:
         total = await self.session.scalar(select(func.count()).select_from(Task))
         stmt = (

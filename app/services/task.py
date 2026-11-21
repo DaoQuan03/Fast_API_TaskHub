@@ -1,6 +1,7 @@
 from typing import Annotated
 from fastapi import Depends
 
+from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT
 from app.core.exceptions import NotFoundException
 from app.core.messages import TASK_NOT_FOUND
 from app.repositories.task import TaskRepository, get_task_repository
@@ -16,7 +17,7 @@ class TaskService:
         created = await self.repository.create(**task_dict)
         return TaskResponse.model_validate(created)
 
-    async def list_tasks(self, *, page: int = 1, limit: int = 20) -> TaskListResponse:
+    async def list_tasks(self, *, page: int = DEFAULT_PAGE, limit: int = DEFAULT_LIMIT) -> TaskListResponse:
         items, total = await self.repository.get_multi(page=page, limit=limit)
         return TaskListResponse(
             items=[TaskResponse.model_validate(item) for item in items],

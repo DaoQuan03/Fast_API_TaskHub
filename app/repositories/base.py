@@ -2,6 +2,7 @@ from typing import Any, Generic, TypeVar
 from sqlalchemy import func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE
 from app.core.database import Base
 
 ModelT = TypeVar("ModelT", bound=Base)
@@ -16,7 +17,7 @@ class BaseRepository(Generic[ModelT]):
         return await self.session.get(self.model, obj_id)
 
     async def get_multi(
-        self, *, page: int = 1, limit: int = 20
+        self, *, page: int = DEFAULT_PAGE, limit: int = DEFAULT_LIMIT
     ) -> tuple[list[ModelT], int]:
         total = await self.session.scalar(select(func.count()).select_from(self.model))
         stmt = (
@@ -31,17 +32,17 @@ class BaseRepository(Generic[ModelT]):
     async def create(self, **data: Any) -> ModelT:
         obj = self.model(**data)
         self.session.add(obj)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(obj)
         return obj
 
     async def update(self, obj: ModelT, data: dict[str, Any]) -> ModelT:
         for field, value in data.items():
             setattr(obj, field, value)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(obj)
         return obj
 
     async def delete(self, obj: ModelT) -> None:
         await self.session.delete(obj)
-        await self.session.commit()
+        await self.session.flush()

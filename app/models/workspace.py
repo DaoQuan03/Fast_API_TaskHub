@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.database import Base
+from app.core.constants import NAME_MAX_LENGTH
+from app.core.database import Base, utc_now
 from app.models.enums import WorkspaceRole
 
 if TYPE_CHECKING:
@@ -11,19 +12,17 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 class Workspace(Base):
     __tablename__ = "workspaces"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH), nullable=False)
     owner_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
 
     # Relationships
     owner: Mapped["User"] = relationship("User", back_populates="owned_workspaces")
@@ -42,7 +41,7 @@ class WorkspaceMember(Base):
         Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
     )
     user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     role: Mapped[WorkspaceRole] = mapped_column(
         SQLEnum(WorkspaceRole, native_enum=False),

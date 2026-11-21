@@ -1,7 +1,8 @@
 from typing import TYPE_CHECKING
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.constants import COLOR_MAX_LENGTH, DEFAULT_LABEL_COLOR, LABEL_NAME_MAX_LENGTH
 from app.core.database import Base
 
 if TYPE_CHECKING:
@@ -16,19 +17,24 @@ class TaskLabel(Base):
         Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
     )
     label_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("labels.id", ondelete="CASCADE"), primary_key=True
+        Integer, ForeignKey("labels.id", ondelete="CASCADE"), primary_key=True, index=True
     )
 
 
 class Label(Base):
     __tablename__ = "labels"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    project_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_labels_project_name"),
     )
-    name: Mapped[str] = mapped_column(String(50), nullable=False)
-    color: Mapped[str] = mapped_column(String(20), default="#3B82F6", nullable=False)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(LABEL_NAME_MAX_LENGTH), nullable=False)
+    color: Mapped[str] = mapped_column(
+        String(COLOR_MAX_LENGTH), default=DEFAULT_LABEL_COLOR, nullable=False
+    )
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="labels")

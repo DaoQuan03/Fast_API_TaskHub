@@ -1,6 +1,7 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
+from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT
 from app.schemas.task import TaskCreate, TaskListResponse, TaskResponse, TaskUpdate
 from app.services.task import TaskService, get_task_service
 
@@ -37,11 +38,10 @@ async def create_task(data: TaskCreate, service: TaskServiceDep) -> TaskResponse
 )
 async def list_tasks(
     service: TaskServiceDep,
-    page: Annotated[int, Query(ge=1, description="Page number")] = 1,
-    limit: Annotated[int, Query(ge=1, le=100, description="Items per page")] = 20,
+    page: Annotated[int, Query(ge=DEFAULT_PAGE, description="Page number")] = DEFAULT_PAGE,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT, description="Items per page")] = DEFAULT_LIMIT,
 ) -> TaskListResponse:
     return await service.list_tasks(page=page, limit=limit)
-
 
 @router.get(
     "/{task_id}",
