@@ -1,6 +1,7 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
+from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT
 from app.schemas.task import TaskCreate, TaskListResponse, TaskResponse, TaskUpdate
 from app.services.task import TaskService, get_task_service
 
@@ -23,21 +24,24 @@ NOT_FOUND_RESPONSE = {
         status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
     },
 )
-def create_task(data: TaskCreate, service: TaskServiceDep) -> TaskResponse:
-    return service.create_task(data)
+async def create_task(data: TaskCreate, service: TaskServiceDep) -> TaskResponse:
+    return await service.create_task(data)
 
 
 @router.get(
     "",
     response_model=TaskListResponse,
-    summary="List all tasks",
+    summary="List all tasks with pagination",
     responses={
         status.HTTP_200_OK: {"description": "List of tasks retrieved successfully"},
     },
 )
-def list_tasks(service: TaskServiceDep) -> TaskListResponse:
-    return service.list_tasks()
-
+async def list_tasks(
+    service: TaskServiceDep,
+    page: Annotated[int, Query(ge=DEFAULT_PAGE, description="Page number")] = DEFAULT_PAGE,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT, description="Items per page")] = DEFAULT_LIMIT,
+) -> TaskListResponse:
+    return await service.list_tasks(page=page, limit=limit)
 
 @router.get(
     "/{task_id}",
@@ -48,8 +52,8 @@ def list_tasks(service: TaskServiceDep) -> TaskListResponse:
         **NOT_FOUND_RESPONSE,
     },
 )
-def get_task(task_id: int, service: TaskServiceDep) -> TaskResponse:
-    return service.get_task(task_id)
+async def get_task(task_id: int, service: TaskServiceDep) -> TaskResponse:
+    return await service.get_task(task_id)
 
 
 @router.patch(
@@ -62,10 +66,10 @@ def get_task(task_id: int, service: TaskServiceDep) -> TaskResponse:
         status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
     },
 )
-def update_task(
+async def update_task(
     task_id: int, data: TaskUpdate, service: TaskServiceDep
 ) -> TaskResponse:
-    return service.update_task(task_id, data)
+    return await service.update_task(task_id, data)
 
 
 @router.delete(
@@ -77,5 +81,5 @@ def update_task(
         **NOT_FOUND_RESPONSE,
     },
 )
-def delete_task(task_id: int, service: TaskServiceDep) -> None:
-    service.delete_task(task_id)
+async def delete_task(task_id: int, service: TaskServiceDep) -> None:
+    await service.delete_task(task_id)

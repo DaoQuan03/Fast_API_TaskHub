@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.database import engine
 from app.core.exceptions import AppException, app_exception_handler
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown event
     logger.info("Shutting down %s...", settings.PROJECT_NAME)
+    await engine.dispose()
 
 
 app = FastAPI(
