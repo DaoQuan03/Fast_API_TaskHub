@@ -1,13 +1,37 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.security import OAuth2PasswordBearer
 
+from app.core.config import settings
 from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT
+from app.core.database import get_db
+from app.core.security import decode_token
+from app.models.enums import TokenType
+from app.models.user import User
 from app.schemas.task import TaskCreate, TaskListResponse, TaskResponse, TaskUpdate
 from app.services.task import TaskService, get_task_service
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
+optional_oauth2 = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_V1_STR}/auth/login",
+    auto_error=False,
+)
+
+
+async def get_optional_current_user(
+    token: Annotated[str | None, Depends(optional_oauth2)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> User | None:
+    if not token:
+        return None
+    payload = decode_token(token, expected_type=TokenType.ACCESS)
+    return await session.get(User, payload["user_id"])
+
+
+OptionalUserDep = Annotated[User | None, Depends(get_optional_current_user)]
 
 NOT_FOUND_RESPONSE = {
     status.HTTP_404_NOT_FOUND: {"description": "Task not found"},
@@ -24,8 +48,12 @@ NOT_FOUND_RESPONSE = {
         status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
     },
 )
-async def create_task(data: TaskCreate, service: TaskServiceDep) -> TaskResponse:
-    return await service.create_task(data)
+async def create_task(
+    data: TaskCreate,
+    service: TaskServiceDep,
+    current_user: OptionalUserDep = None,
+) -> TaskResponse:
+    return await service.create_task(data, current_user=current_user)
 
 
 @router.get(
@@ -42,6 +70,7 @@ async def list_tasks(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT, description="Items per page")] = DEFAULT_LIMIT,
 ) -> TaskListResponse:
     return await service.list_tasks(page=page, limit=limit)
+
 
 @router.get(
     "/{task_id}",
@@ -67,9 +96,12 @@ async def get_task(task_id: int, service: TaskServiceDep) -> TaskResponse:
     },
 )
 async def update_task(
-    task_id: int, data: TaskUpdate, service: TaskServiceDep
+    task_id: int,
+    data: TaskUpdate,
+    service: TaskServiceDep,
+    current_user: OptionalUserDep = None,
 ) -> TaskResponse:
-    return await service.update_task(task_id, data)
+    return await service.update_task(task_id, data, current_user=current_user)
 
 
 @router.delete(
@@ -81,5 +113,9 @@ async def update_task(
         **NOT_FOUND_RESPONSE,
     },
 )
-async def delete_task(task_id: int, service: TaskServiceDep) -> None:
-    await service.delete_task(task_id)
+async def delete_task(
+    task_id: int,
+    service: TaskServiceDep,
+    current_user: OptionalUserDep = None,
+) -> None:
+    await service.delete_task(task_id, current_user=current_user)

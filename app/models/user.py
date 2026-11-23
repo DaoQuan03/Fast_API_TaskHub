@@ -9,6 +9,7 @@ from app.models.enums import UserRole
 
 if TYPE_CHECKING:
     from app.models.comment import Comment
+    from app.models.refresh_token import RefreshToken
     from app.models.task import Task
     from app.models.workspace import Workspace, WorkspaceMember
 
@@ -32,7 +33,6 @@ class User(Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
 
-    # Relationships
     owned_workspaces: Mapped[list["Workspace"]] = relationship(
         "Workspace", back_populates="owner", cascade="all, delete-orphan"
     )
@@ -51,4 +51,7 @@ class User(Base):
     )
     comments: Mapped[list["Comment"]] = relationship(
         "Comment", back_populates="author", cascade="all, delete-orphan"
+    )
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
+        "RefreshToken", back_populates="user", cascade="all, delete-orphan"
     )
