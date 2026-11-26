@@ -24,13 +24,18 @@ class Workspace(Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
 
-    # Relationships
     owner: Mapped["User"] = relationship("User", back_populates="owned_workspaces")
     members: Mapped[list["WorkspaceMember"]] = relationship(
-        "WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan"
+        "WorkspaceMember",
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     projects: Mapped[list["Project"]] = relationship(
-        "Project", back_populates="workspace", cascade="all, delete-orphan"
+        "Project",
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -49,6 +54,5 @@ class WorkspaceMember(Base):
         nullable=False,
     )
 
-    # Relationships
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="members")
     user: Mapped["User"] = relationship("User", back_populates="workspace_memberships")

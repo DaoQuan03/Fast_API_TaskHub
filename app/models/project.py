@@ -31,11 +31,16 @@ class Project(Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
 
-    # Relationships
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="projects")
     tasks: Mapped[list["Task"]] = relationship(
-        "Task", back_populates="project", cascade="all, delete-orphan"
+        "Task",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     labels: Mapped[list["Label"]] = relationship(
-        "Label", back_populates="project", cascade="all, delete-orphan"
+        "Label",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )

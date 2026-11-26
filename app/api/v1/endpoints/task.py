@@ -1,12 +1,31 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import PositiveInt
 
-from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT
-from app.dependencies import CurrentUserDep, OwnedTaskDep
-from app.schemas.task import TaskCreate, TaskListResponse, TaskResponse, TaskUpdate
+from app.dependencies import (
+    CommentModifyDep,
+    CurrentUserDep,
+    LabelIdPath,
+    PaginationDep,
+    TaskReadDep,
+    TaskWriteActiveDep,
+)
+from app.models.enums import TaskPriority, TaskStatus
+from app.schemas.task import (
+    CommentCreate,
+    CommentListResponse,
+    CommentResponse,
+    CommentUpdate,
+    TaskCreate,
+    TaskFilterParams,
+    TaskListResponse,
+    TaskResponse,
+    TaskUpdate,
+)
 from app.services.task import TaskService, get_task_service
 
 router = APIRouter()
+comments_router = APIRouter()
 
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 
@@ -14,10 +33,17 @@ AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
 }
 NOT_FOUND_RESPONSE = {
-    status.HTTP_404_NOT_FOUND: {"description": "Task not found"},
+    status.HTTP_404_NOT_FOUND: {"description": "Resource not found"},
 }
 FORBIDDEN_RESPONSE = {
     status.HTTP_403_FORBIDDEN: {"description": "Forbidden"},
+}
+TASK_WRITE_RESPONSES = {
+    **AUTH_RESPONSES,
+    **FORBIDDEN_RESPONSE,
+    **NOT_FOUND_RESPONSE,
+    status.HTTP_409_CONFLICT: {"description": "Project is archived or conflict"},
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
 }
 
 
@@ -28,8 +54,7 @@ FORBIDDEN_RESPONSE = {
     summary="Create a new task",
     responses={
         status.HTTP_201_CREATED: {"description": "Task created successfully"},
-        **AUTH_RESPONSES,
-        status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
+        **TASK_WRITE_RESPONSES,
     },
 )
 async def create_task(
@@ -43,19 +68,45 @@ async def create_task(
 @router.get(
     "",
     response_model=TaskListResponse,
-    summary="List all tasks with pagination",
+    summary="List all tasks with filtering and pagination",
     responses={
         status.HTTP_200_OK: {"description": "List of tasks retrieved successfully"},
         **AUTH_RESPONSES,
+        **FORBIDDEN_RESPONSE,
     },
 )
 async def list_tasks(
     service: TaskServiceDep,
-    _current_user: CurrentUserDep,
-    page: Annotated[int, Query(ge=DEFAULT_PAGE, description="Page number")] = DEFAULT_PAGE,
-    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT, description="Items per page")] = DEFAULT_LIMIT,
+    current_user: CurrentUserDep,
+    pagination: PaginationDep,
+    status_filter: Annotated[
+        list[TaskStatus] | None,
+        Query(alias="status", description="Filter by task statuses"),
+    ] = None,
+    priority_filter: Annotated[
+        list[TaskPriority] | None,
+        Query(alias="priority", description="Filter by task priorities"),
+    ] = None,
+    assignee_id: Annotated[
+        PositiveInt | None,
+        Query(description="Filter by assignee user ID"),
+    ] = None,
+    project_id: Annotated[
+        PositiveInt | None,
+        Query(description="Filter by project ID"),
+    ] = None,
 ) -> TaskListResponse:
-    return await service.list_tasks(page=page, limit=limit)
+    filters = TaskFilterParams(
+        status=status_filter,
+        priority=priority_filter,
+        assignee_id=assignee_id,
+        project_id=project_id,
+    )
+    return await service.list_tasks(
+        current_user=current_user,
+        pagination=pagination,
+        filters=filters,
+    )
 
 
 @router.get(
@@ -65,15 +116,15 @@ async def list_tasks(
     responses={
         status.HTTP_200_OK: {"description": "Task retrieved successfully"},
         **AUTH_RESPONSES,
+        **FORBIDDEN_RESPONSE,
         **NOT_FOUND_RESPONSE,
     },
 )
 async def get_task(
-    task_id: int,
+    access: TaskReadDep,
     service: TaskServiceDep,
-    _current_user: CurrentUserDep,
 ) -> TaskResponse:
-    return await service.get_task(task_id)
+    return await service.get_task(access)
 
 
 @router.patch(
@@ -82,18 +133,15 @@ async def get_task(
     summary="Update a task by ID",
     responses={
         status.HTTP_200_OK: {"description": "Task updated successfully"},
-        **AUTH_RESPONSES,
-        **FORBIDDEN_RESPONSE,
-        **NOT_FOUND_RESPONSE,
-        status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
+        **TASK_WRITE_RESPONSES,
     },
 )
 async def update_task(
     data: TaskUpdate,
-    task: OwnedTaskDep,
+    access: TaskWriteActiveDep,
     service: TaskServiceDep,
 ) -> TaskResponse:
-    return await service.update_task(task, data)
+    return await service.update_task(access, data)
 
 
 @router.delete(
@@ -102,13 +150,115 @@ async def update_task(
     summary="Delete a task by ID",
     responses={
         status.HTTP_204_NO_CONTENT: {"description": "Task deleted successfully"},
+        **TASK_WRITE_RESPONSES,
+    },
+)
+async def delete_task(
+    access: TaskWriteActiveDep,
+    service: TaskServiceDep,
+) -> None:
+    await service.delete_task(access)
+
+
+@router.post(
+    "/{task_id}/labels/{label_id}",
+    response_model=TaskResponse,
+    summary="Attach a label to a task",
+    responses={
+        status.HTTP_200_OK: {"description": "Label attached successfully"},
+        **TASK_WRITE_RESPONSES,
+    },
+)
+async def attach_label_to_task(
+    label_id: LabelIdPath,
+    access: TaskWriteActiveDep,
+    service: TaskServiceDep,
+) -> TaskResponse:
+    return await service.attach_label(access, label_id)
+
+
+@router.delete(
+    "/{task_id}/labels/{label_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Detach a label from a task",
+    responses={
+        status.HTTP_204_NO_CONTENT: {"description": "Label detached successfully"},
+        **TASK_WRITE_RESPONSES,
+    },
+)
+async def detach_label_from_task(
+    label_id: LabelIdPath,
+    access: TaskWriteActiveDep,
+    service: TaskServiceDep,
+) -> None:
+    await service.detach_label(access, label_id)
+
+
+@router.post(
+    "/{task_id}/comments",
+    response_model=CommentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a comment to a task",
+    responses={
+        status.HTTP_201_CREATED: {"description": "Comment created successfully"},
+        **TASK_WRITE_RESPONSES,
+    },
+)
+async def create_comment(
+    data: CommentCreate,
+    access: TaskWriteActiveDep,
+    service: TaskServiceDep,
+) -> CommentResponse:
+    return await service.create_comment(access, data)
+
+
+@router.get(
+    "/{task_id}/comments",
+    response_model=CommentListResponse,
+    summary="List comments of a task",
+    responses={
+        status.HTTP_200_OK: {"description": "Comments retrieved successfully"},
         **AUTH_RESPONSES,
         **FORBIDDEN_RESPONSE,
         **NOT_FOUND_RESPONSE,
     },
 )
-async def delete_task(
-    task: OwnedTaskDep,
+async def list_comments(
+    access: TaskReadDep,
+    pagination: PaginationDep,
+    service: TaskServiceDep,
+) -> CommentListResponse:
+    return await service.list_comments(access, pagination=pagination)
+
+
+@comments_router.patch(
+    "/{comment_id}",
+    response_model=CommentResponse,
+    summary="Update a comment by ID (Author or Workspace Owner/Admin)",
+    responses={
+        status.HTTP_200_OK: {"description": "Comment updated successfully"},
+        **TASK_WRITE_RESPONSES,
+    },
+)
+async def update_comment(
+    data: CommentUpdate,
+    access: CommentModifyDep,
+    service: TaskServiceDep,
+) -> CommentResponse:
+    return await service.update_comment(access, data)
+
+
+@comments_router.delete(
+    "/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a comment by ID (Author or Workspace Owner/Admin)",
+    responses={
+        status.HTTP_204_NO_CONTENT: {"description": "Comment deleted successfully"},
+        **TASK_WRITE_RESPONSES,
+    },
+)
+async def delete_comment(
+    access: CommentModifyDep,
     service: TaskServiceDep,
 ) -> None:
-    await service.delete_task(task)
+    await service.delete_comment(access)

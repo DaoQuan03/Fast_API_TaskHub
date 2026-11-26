@@ -36,8 +36,10 @@ class Label(Base):
         String(COLOR_MAX_LENGTH), default=DEFAULT_LABEL_COLOR, nullable=False
     )
 
-    # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="labels")
     tasks: Mapped[list["Task"]] = relationship(
-        "Task", secondary="task_labels", back_populates="labels"
+        "Task",
+        secondary="task_labels",
+        back_populates="labels",
+        passive_deletes=True,
     )

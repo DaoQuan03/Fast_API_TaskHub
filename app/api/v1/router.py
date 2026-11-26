@@ -5,4 +5,14 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(workspace.router, prefix="/workspaces", tags=["workspaces"])
+api_router.include_router(
+    workspace.projects_router,
+    prefix="/projects",
+    tags=["projects"],
+)
 api_router.include_router(task.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(
+    task.comments_router,
+    prefix="/comments",
+    tags=["comments"],
+)

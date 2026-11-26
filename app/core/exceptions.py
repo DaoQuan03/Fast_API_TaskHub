@@ -32,6 +32,10 @@ class ConflictException(AppException):
     status_code: int = status.HTTP_409_CONFLICT
 
 
+class UnprocessableEntityException(AppException):
+    status_code: int = status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     headers = (
         {"WWW-Authenticate": "Bearer"}
