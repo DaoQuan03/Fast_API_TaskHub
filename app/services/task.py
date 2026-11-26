@@ -1,6 +1,7 @@
 from typing import Annotated
 from fastapi import Depends
 
+from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT
 from app.core.exceptions import NotFoundException
 from app.core.messages import TASK_NOT_FOUND
 from app.repositories.task import TaskRepository, get_task_repository
@@ -11,38 +12,40 @@ class TaskService:
     def __init__(self, repository: TaskRepository) -> None:
         self.repository = repository
 
-    def create_task(self, data: TaskCreate) -> TaskResponse:
+    async def create_task(self, data: TaskCreate) -> TaskResponse:
         task_dict = data.model_dump()
-        created = self.repository.create(task_dict)
+        created = await self.repository.create(**task_dict)
         return TaskResponse.model_validate(created)
 
-    def list_tasks(self) -> TaskListResponse:
-        items, total = self.repository.get_all()
+    async def list_tasks(self, *, page: int = DEFAULT_PAGE, limit: int = DEFAULT_LIMIT) -> TaskListResponse:
+        items, total = await self.repository.get_multi(page=page, limit=limit)
         return TaskListResponse(
             items=[TaskResponse.model_validate(item) for item in items],
             total=total,
         )
 
-    def get_task(self, task_id: int) -> TaskResponse:
-        task = self.repository.get_by_id(task_id)
+    async def get_task(self, task_id: int) -> TaskResponse:
+        task = await self.repository.get(task_id)
         if not task:
             raise NotFoundException(TASK_NOT_FOUND.format(task_id=task_id))
         return TaskResponse.model_validate(task)
 
-    def update_task(self, task_id: int, data: TaskUpdate) -> TaskResponse:
-        update_data = data.model_dump(exclude_unset=True)
-        updated = self.repository.update(task_id, update_data)
-        if not updated:
+    async def update_task(self, task_id: int, data: TaskUpdate) -> TaskResponse:
+        task = await self.repository.get(task_id)
+        if not task:
             raise NotFoundException(TASK_NOT_FOUND.format(task_id=task_id))
+        update_data = data.model_dump(exclude_unset=True)
+        updated = await self.repository.update(task, update_data)
         return TaskResponse.model_validate(updated)
 
-    def delete_task(self, task_id: int) -> None:
-        deleted = self.repository.delete(task_id)
-        if not deleted:
+    async def delete_task(self, task_id: int) -> None:
+        task = await self.repository.get(task_id)
+        if not task:
             raise NotFoundException(TASK_NOT_FOUND.format(task_id=task_id))
+        await self.repository.delete(task)
 
 
 def get_task_service(
-    repository: Annotated[TaskRepository, Depends(get_task_repository)]
+    repository: Annotated[TaskRepository, Depends(get_task_repository)],
 ) -> TaskService:
     return TaskService(repository=repository)
