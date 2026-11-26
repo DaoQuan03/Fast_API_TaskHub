@@ -1,4 +1,4 @@
-"""Add refresh_tokens table
+"""Add refresh_tokens table and password_changed_at to users
 
 Revision ID: 0002_add_refresh_tokens
 Revises: 0001_initial_schema
@@ -17,6 +17,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    op.add_column(
+        "users",
+        sa.Column("password_changed_at", sa.DateTime(timezone=True), nullable=True),
+    )
     op.create_table(
         "refresh_tokens",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -38,3 +42,4 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_refresh_tokens_user_id"), table_name="refresh_tokens")
     op.drop_index(op.f("ix_refresh_tokens_jti"), table_name="refresh_tokens")
     op.drop_table("refresh_tokens")
+    op.drop_column("users", "password_changed_at")

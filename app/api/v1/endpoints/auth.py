@@ -9,14 +9,19 @@ from app.schemas.auth import (
     RegisterRequest,
     TokenResponse,
     UserResponse,
-    UserUpdate,
 )
 from app.services.auth import AuthService, get_auth_service
 
 router = APIRouter()
-users_router = APIRouter()
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+UNAUTHORIZED_RESPONSE = {
+    status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
+}
+VALIDATION_RESPONSE = {
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Validation error"},
+}
 
 
 @router.post(
@@ -24,6 +29,11 @@ AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user account",
+    responses={
+        status.HTTP_201_CREATED: {"description": "User registered successfully"},
+        status.HTTP_409_CONFLICT: {"description": "Email already exists"},
+        **VALIDATION_RESPONSE,
+    },
 )
 async def register(
     data: RegisterRequest,
@@ -36,6 +46,11 @@ async def register(
     "/login",
     response_model=TokenResponse,
     summary="Authenticate user and issue access & refresh tokens",
+    responses={
+        status.HTTP_200_OK: {"description": "Authenticated successfully"},
+        **UNAUTHORIZED_RESPONSE,
+        **VALIDATION_RESPONSE,
+    },
 )
 async def login(
     data: LoginRequest,
@@ -48,6 +63,11 @@ async def login(
     "/refresh",
     response_model=TokenResponse,
     summary="Rotate refresh token and issue new token pair",
+    responses={
+        status.HTTP_200_OK: {"description": "Tokens refreshed successfully"},
+        **UNAUTHORIZED_RESPONSE,
+        **VALIDATION_RESPONSE,
+    },
 )
 async def refresh_tokens(
     data: RefreshRequest,
@@ -57,9 +77,32 @@ async def refresh_tokens(
 
 
 @router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke refresh token and log out",
+    responses={
+        status.HTTP_204_NO_CONTENT: {"description": "Logged out successfully"},
+        **UNAUTHORIZED_RESPONSE,
+        **VALIDATION_RESPONSE,
+    },
+)
+async def logout(
+    data: RefreshRequest,
+    service: AuthServiceDep,
+) -> None:
+    await service.logout(data.refresh_token)
+
+
+@router.post(
     "/change-password",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Change current user password and revoke old refresh tokens",
+    summary="Change current user password and revoke old tokens",
+    responses={
+        status.HTTP_204_NO_CONTENT: {"description": "Password changed successfully"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Incorrect current password"},
+        **UNAUTHORIZED_RESPONSE,
+        **VALIDATION_RESPONSE,
+    },
 )
 async def change_password(
     data: ChangePasswordRequest,
@@ -67,39 +110,3 @@ async def change_password(
     service: AuthServiceDep,
 ) -> None:
     await service.change_password(current_user, data)
-
-
-@users_router.get(
-    "/me",
-    response_model=UserResponse,
-    summary="Get current authenticated user profile",
-)
-async def get_me(current_user: CurrentUserDep) -> UserResponse:
-    return UserResponse.model_validate(current_user)
-
-
-@users_router.patch(
-    "/{user_id}",
-    response_model=UserResponse,
-    summary="Update a user by ID",
-)
-async def update_user(
-    user_id: int,
-    data: UserUpdate,
-    current_user: CurrentUserDep,
-    service: AuthServiceDep,
-) -> UserResponse:
-    return await service.update_user(user_id, data, current_user)
-
-
-@users_router.delete(
-    "/{user_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a user by ID (Admin only)",
-)
-async def delete_user(
-    user_id: int,
-    current_user: CurrentUserDep,
-    service: AuthServiceDep,
-) -> None:
-    await service.delete_user(user_id, current_user)

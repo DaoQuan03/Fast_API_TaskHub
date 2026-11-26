@@ -25,8 +25,9 @@ def create_token(
     token_type: TokenType,
     expires_delta: timedelta | None = None,
     jti: str | None = None,
+    issued_at: datetime | None = None,
 ) -> tuple[str, str, datetime]:
-    now = datetime.now(timezone.utc)
+    now = issued_at or datetime.now(timezone.utc)
     if expires_delta is None:
         if token_type == TokenType.ACCESS:
             expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -38,7 +39,7 @@ def create_token(
         "sub": str(subject),
         "type": token_type.value,
         "jti": token_jti,
-        "iat": now,
+        "iat": int(now.timestamp()),
         "exp": expire,
     }
     encoded = jwt.encode(
@@ -52,16 +53,28 @@ def create_token(
 def create_access_token(
     subject: int | str,
     expires_delta: timedelta | None = None,
+    issued_at: datetime | None = None,
 ) -> str:
-    token, _, _ = create_token(subject, TokenType.ACCESS, expires_delta=expires_delta)
+    token, _, _ = create_token(
+        subject,
+        TokenType.ACCESS,
+        expires_delta=expires_delta,
+        issued_at=issued_at,
+    )
     return token
 
 
 def create_refresh_token(
     subject: int | str,
     expires_delta: timedelta | None = None,
+    issued_at: datetime | None = None,
 ) -> tuple[str, str, datetime]:
-    return create_token(subject, TokenType.REFRESH, expires_delta=expires_delta)
+    return create_token(
+        subject,
+        TokenType.REFRESH,
+        expires_delta=expires_delta,
+        issued_at=issued_at,
+    )
 
 
 def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:
@@ -74,6 +87,7 @@ def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:
         token_type = payload["type"]
         user_id = int(payload["sub"])
         jti = str(payload["jti"])
+        iat = int(payload["iat"])
         if not jti:
             raise ValueError
     except (jwt.PyJWTError, KeyError, ValueError, TypeError):
@@ -83,4 +97,5 @@ def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:
         raise UnauthorizedException(INVALID_TOKEN_TYPE)
 
     payload["user_id"] = user_id
+    payload["iat_ts"] = iat
     return payload

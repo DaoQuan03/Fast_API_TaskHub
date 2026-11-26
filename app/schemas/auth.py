@@ -1,12 +1,14 @@
 from datetime import datetime
-from pydantic import Field, field_validator, model_validator
+from pydantic import EmailStr, Field, field_validator, model_validator
 
 from app.core.constants import (
     EMAIL_MAX_LENGTH,
     NAME_MAX_LENGTH,
     NAME_MIN_LENGTH,
+    NON_EMPTY_STR_MIN_LENGTH,
     PASSWORD_MAX_BYTES,
     PASSWORD_MIN_LENGTH,
+    TOKEN_TYPE_BEARER,
 )
 from app.core.messages import FIELD_CANNOT_BE_NULL, PASSWORD_TOO_LONG_BYTES
 from app.models.enums import UserRole
@@ -19,8 +21,14 @@ def validate_password_bytes(value: str) -> str:
     return value
 
 
+def normalize_email_str(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip().lower()
+    return value
+
+
 class RegisterRequest(BaseSchema):
-    email: str = Field(..., min_length=3, max_length=EMAIL_MAX_LENGTH)
+    email: EmailStr = Field(..., max_length=EMAIL_MAX_LENGTH)
     full_name: str = Field(
         ...,
         min_length=NAME_MIN_LENGTH,
@@ -32,6 +40,11 @@ class RegisterRequest(BaseSchema):
         max_length=PASSWORD_MAX_BYTES,
     )
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return normalize_email_str(value)
+
     @field_validator("password")
     @classmethod
     def check_password_bytes(cls, value: str) -> str:
@@ -39,8 +52,17 @@ class RegisterRequest(BaseSchema):
 
 
 class LoginRequest(BaseSchema):
-    email: str = Field(..., min_length=3, max_length=EMAIL_MAX_LENGTH)
-    password: str = Field(..., min_length=1, max_length=PASSWORD_MAX_BYTES)
+    email: EmailStr = Field(..., max_length=EMAIL_MAX_LENGTH)
+    password: str = Field(
+        ...,
+        min_length=NON_EMPTY_STR_MIN_LENGTH,
+        max_length=PASSWORD_MAX_BYTES,
+    )
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return normalize_email_str(value)
 
     @field_validator("password")
     @classmethod
@@ -51,15 +73,19 @@ class LoginRequest(BaseSchema):
 class TokenResponse(BaseSchema):
     access_token: str
     refresh_token: str
-    token_type: str = "bearer"
+    token_type: str = TOKEN_TYPE_BEARER
 
 
 class RefreshRequest(BaseSchema):
-    refresh_token: str = Field(..., min_length=1)
+    refresh_token: str = Field(..., min_length=NON_EMPTY_STR_MIN_LENGTH)
 
 
 class ChangePasswordRequest(BaseSchema):
-    current_password: str = Field(..., min_length=1, max_length=PASSWORD_MAX_BYTES)
+    current_password: str = Field(
+        ...,
+        min_length=NON_EMPTY_STR_MIN_LENGTH,
+        max_length=PASSWORD_MAX_BYTES,
+    )
     new_password: str = Field(
         ...,
         min_length=PASSWORD_MIN_LENGTH,
@@ -74,11 +100,27 @@ class ChangePasswordRequest(BaseSchema):
 
 class UserResponse(BaseSchema):
     id: int
-    email: str
+    email: EmailStr
     full_name: str
     role: UserRole
     is_active: bool
     created_at: datetime
+
+
+class UserMeUpdate(BaseSchema):
+    full_name: str | None = Field(
+        default=None,
+        min_length=NAME_MIN_LENGTH,
+        max_length=NAME_MAX_LENGTH,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_for_non_nullable_fields(cls, data: object) -> object:
+        if isinstance(data, dict):
+            if "full_name" in data and data["full_name"] is None:
+                raise ValueError(FIELD_CANNOT_BE_NULL.format(field="full_name"))
+        return data
 
 
 class UserUpdate(BaseSchema):

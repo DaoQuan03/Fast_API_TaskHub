@@ -2,20 +2,20 @@ from datetime import datetime, timezone
 from typing import Annotated
 from fastapi import Depends
 
+from app.core.constants import DUMMY_PASSWORD_HASH
 from app.core.exceptions import (
     BadRequestException,
-    ForbiddenException,
     NotFoundException,
     UnauthorizedException,
 )
 from app.core.messages import (
     CANNOT_DELETE_SELF,
+    CANNOT_MODIFY_OWN_ROLE_OR_STATUS,
     INACTIVE_USER,
     INCORRECT_CURRENT_PASSWORD,
     INVALID_CREDENTIALS,
     INVALID_OR_EXPIRED_TOKEN,
     LAST_ACTIVE_ADMIN_REQUIRED,
-    PERMISSION_DENIED,
     TOKEN_REVOKED_OR_REUSED,
     USER_NOT_FOUND,
 )
@@ -34,6 +34,7 @@ from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
     TokenResponse,
+    UserMeUpdate,
     UserResponse,
     UserUpdate,
 )
@@ -45,7 +46,7 @@ class AuthService:
 
     async def register(self, data: RegisterRequest) -> UserResponse:
         user = await self.repository.create_user(
-            email=data.email,
+            email=str(data.email),
             full_name=data.full_name,
             hashed_password=hash_password(data.password),
             role=UserRole.MEMBER,
@@ -53,8 +54,10 @@ class AuthService:
         return UserResponse.model_validate(user)
 
     async def login(self, data: LoginRequest) -> TokenResponse:
-        user = await self.repository.get_by_email(data.email)
-        if not user or not verify_password(data.password, user.hashed_password):
+        user = await self.repository.get_by_email(str(data.email))
+        target_hash = user.hashed_password if user is not None else DUMMY_PASSWORD_HASH
+        password_valid = verify_password(data.password, target_hash)
+        if user is None or not password_valid:
             raise UnauthorizedException(INVALID_CREDENTIALS)
         if not user.is_active:
             raise UnauthorizedException(INACTIVE_USER)
@@ -95,6 +98,14 @@ class AuthService:
 
         return await self._issue_tokens(user.id)
 
+    async def logout(self, refresh_token_str: str) -> None:
+        payload = decode_token(refresh_token_str, expected_type=TokenType.REFRESH)
+        jti = payload["jti"]
+        stored_token = await self.repository.get_refresh_token_by_jti(jti)
+        if not stored_token or stored_token.revoked:
+            raise UnauthorizedException(INVALID_OR_EXPIRED_TOKEN)
+        await self.repository.atomic_revoke_refresh_token(jti)
+
     async def change_password(
         self,
         current_user: User,
@@ -103,26 +114,36 @@ class AuthService:
         if not verify_password(data.current_password, current_user.hashed_password):
             raise BadRequestException(INCORRECT_CURRENT_PASSWORD)
 
+        now = datetime.now(timezone.utc)
         await self.repository.update(
             current_user,
-            {"hashed_password": hash_password(data.new_password)},
+            {
+                "hashed_password": hash_password(data.new_password),
+                "password_changed_at": now,
+            },
         )
         await self.repository.revoke_all_user_tokens(current_user.id)
 
-    async def update_user(
+    async def update_me(
+        self,
+        current_user: User,
+        data: UserMeUpdate,
+    ) -> UserResponse:
+        update_data = data.model_dump(exclude_unset=True)
+        updated = await self.repository.update(current_user, update_data)
+        return UserResponse.model_validate(updated)
+
+    async def update_user_by_admin(
         self,
         target_user_id: int,
         data: UserUpdate,
-        current_user: User,
+        current_admin: User,
     ) -> UserResponse:
-        if current_user.role != UserRole.ADMIN and current_user.id != target_user_id:
-            raise ForbiddenException(PERMISSION_DENIED)
-
         update_data = data.model_dump(exclude_unset=True)
-        if current_user.role != UserRole.ADMIN and (
+        if current_admin.id == target_user_id and (
             "role" in update_data or "is_active" in update_data
         ):
-            raise ForbiddenException(PERMISSION_DENIED)
+            raise BadRequestException(CANNOT_MODIFY_OWN_ROLE_OR_STATUS)
 
         target_user = await self.repository.get(target_user_id)
         if not target_user:
@@ -146,11 +167,12 @@ class AuthService:
             await self.repository.revoke_all_user_tokens(target_user.id)
         return UserResponse.model_validate(updated)
 
-    async def delete_user(self, target_user_id: int, current_user: User) -> None:
-        if current_user.role != UserRole.ADMIN:
-            raise ForbiddenException(PERMISSION_DENIED)
-
-        if current_user.id == target_user_id:
+    async def delete_user_by_admin(
+        self,
+        target_user_id: int,
+        current_admin: User,
+    ) -> None:
+        if current_admin.id == target_user_id:
             raise BadRequestException(CANNOT_DELETE_SELF)
 
         target_user = await self.repository.get(target_user_id)

@@ -7,6 +7,7 @@ from app.core.constants import (
     DEFAULT_REFRESH_TOKEN_EXPIRE_DAYS,
     SECRET_KEY_MIN_LENGTH,
 )
+from app.core.messages import SECRET_KEY_TOO_SHORT
 
 
 class Settings(BaseSettings):
@@ -14,10 +15,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = "sqlite+aiosqlite:///./taskhub.db"
-    SECRET_KEY: str = Field(
-        default="your-super-secret-key-min-16-chars",
-        min_length=SECRET_KEY_MIN_LENGTH,
-    )
+    SECRET_KEY: str = Field(..., min_length=SECRET_KEY_MIN_LENGTH)
     JWT_ALGORITHM: str = DEFAULT_JWT_ALGORITHM
     ACCESS_TOKEN_EXPIRE_MINUTES: int = DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES
     REFRESH_TOKEN_EXPIRE_DAYS: int = DEFAULT_REFRESH_TOKEN_EXPIRE_DAYS
@@ -36,7 +34,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_secret_key(cls, v: object) -> str:
         if not isinstance(v, str) or len(v.strip()) < SECRET_KEY_MIN_LENGTH:
-            raise ValueError(f"SECRET_KEY must be at least {SECRET_KEY_MIN_LENGTH} characters")
+            raise ValueError(
+                SECRET_KEY_TOO_SHORT.format(min_length=SECRET_KEY_MIN_LENGTH)
+            )
         return v.strip()
 
     model_config = SettingsConfigDict(

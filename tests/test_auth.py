@@ -1,9 +1,12 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
-from app.core.security import create_token, hash_password
+from app.core.messages import INACTIVE_USER, INVALID_CREDENTIALS
+from app.core.security import create_access_token, create_token, hash_password
 from app.models.enums import TokenType, UserRole
 from app.models.user import User
-from tests.test_task import TestingSessionLocal, client, setup_test_db  # noqa: F401
+from tests.conftest import TestingSessionLocal
 
 
 def _register_and_login(
@@ -25,47 +28,94 @@ def _register_and_login(
     return {"user": reg.json(), "tokens": login.json()}
 
 
-def _create_admin() -> int:
-    import asyncio
-
+def _seed_user(
+    *,
+    email: str = "admin@example.com",
+    password: str = "AdminPass123!",
+    role: UserRole = UserRole.ADMIN,
+    is_active: bool = True,
+) -> int:
     async def _seed() -> int:
         async with TestingSessionLocal() as session:
-            admin = User(
-                email="admin@example.com",
-                full_name="Admin User",
-                hashed_password=hash_password("AdminPass123!"),
-                role=UserRole.ADMIN,
-                is_active=True,
+            user = User(
+                email=email,
+                full_name="Seeded User",
+                hashed_password=hash_password(password),
+                role=role,
+                is_active=is_active,
             )
-            session.add(admin)
+            session.add(user)
             await session.commit()
-            await session.refresh(admin)
-            return admin.id
+            await session.refresh(user)
+            return user.id
 
     return asyncio.run(_seed())
 
 
-def test_register_duplicate_email_returns_409(client: TestClient):
+def test_register_email_validation_normalization_and_duplicate_409(client: TestClient):
+    res_invalid_email = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "notanemail",
+            "full_name": "Invalid Email",
+            "password": "Password123!",
+        },
+    )
+    assert res_invalid_email.status_code == 422
+
     res1 = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "dup@example.com",
+            "email": "  Case@Example.com ",
             "full_name": "First User",
             "password": "Password123!",
         },
     )
     assert res1.status_code == 201
+    assert res1.json()["email"] == "case@example.com"
     assert res1.json()["role"] == "MEMBER"
 
     res2 = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "dup@example.com",
+            "email": "case@example.com",
             "full_name": "Second User",
             "password": "Password123!",
         },
     )
     assert res2.status_code == 409
+
+
+def test_login_nonexistent_email_and_wrong_password_and_inactive_user(
+    client: TestClient,
+):
+    _register_and_login(client, email="active@example.com", password="Password123!")
+
+    res_no_email = client.post(
+        "/api/v1/auth/login",
+        json={"email": "nonexistent@example.com", "password": "Password123!"},
+    )
+    res_wrong_pass = client.post(
+        "/api/v1/auth/login",
+        json={"email": "active@example.com", "password": "WrongPassword123!"},
+    )
+    assert res_no_email.status_code == 401
+    assert res_wrong_pass.status_code == 401
+    assert res_no_email.json()["detail"] == INVALID_CREDENTIALS
+    assert res_wrong_pass.json()["detail"] == INVALID_CREDENTIALS
+
+    _seed_user(
+        email="locked@example.com",
+        password="Password123!",
+        role=UserRole.MEMBER,
+        is_active=False,
+    )
+    res_inactive = client.post(
+        "/api/v1/auth/login",
+        json={"email": "locked@example.com", "password": "Password123!"},
+    )
+    assert res_inactive.status_code == 401
+    assert res_inactive.json()["detail"] == INACTIVE_USER
 
 
 def test_refresh_token_cannot_call_protected_api_401(client: TestClient):
@@ -89,7 +139,7 @@ def test_invalid_sub_claim_returns_401_not_500(client: TestClient):
     assert res.status_code == 401
 
 
-def test_refresh_token_rotation_and_reuse_detection_401(client: TestClient):
+def test_refresh_token_rotation_reuse_detection_and_logout(client: TestClient):
     ctx = _register_and_login(client)
     old_refresh = ctx["tokens"]["refresh_token"]
 
@@ -107,21 +157,41 @@ def test_refresh_token_rotation_and_reuse_detection_401(client: TestClient):
     )
     assert res_new_after_compromise.status_code == 401
 
+    ctx2 = _register_and_login(client, email="logout@example.com")
+    refresh2 = ctx2["tokens"]["refresh_token"]
+    res_logout = client.post("/api/v1/auth/logout", json={"refresh_token": refresh2})
+    assert res_logout.status_code == 204
+    res_after_logout = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": refresh2},
+    )
+    assert res_after_logout.status_code == 401
 
-def test_change_password_revokes_refresh_and_old_password_fails_401(client: TestClient):
+
+def test_change_password_invalidates_old_access_token_and_refresh_token(
+    client: TestClient,
+):
     ctx = _register_and_login(client, email="cp@example.com", password="OldPassword123!")
-    access_token = ctx["tokens"]["access_token"]
+    user_id = ctx["user"]["id"]
+    old_issued_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    old_access_token = create_access_token(user_id, issued_at=old_issued_at)
     refresh_token = ctx["tokens"]["refresh_token"]
 
     res_cp = client.post(
         "/api/v1/auth/change-password",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {old_access_token}"},
         json={
             "current_password": "OldPassword123!",
             "new_password": "NewPassword456!",
         },
     )
     assert res_cp.status_code == 204
+
+    res_me_old_access = client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {old_access_token}"},
+    )
+    assert res_me_old_access.status_code == 401
 
     res_old_login = client.post(
         "/api/v1/auth/login",
@@ -142,13 +212,23 @@ def test_change_password_revokes_refresh_and_old_password_fails_401(client: Test
     assert res_new_login.status_code == 200
 
 
-def test_member_cannot_modify_or_delete_other_user_or_task_403(client: TestClient):
+def test_update_me_and_member_cannot_modify_or_delete_other_user_or_task_403(
+    client: TestClient,
+):
     user_a = _register_and_login(client, email="a@example.com")
     user_b = _register_and_login(client, email="b@example.com")
 
     token_a = user_a["tokens"]["access_token"]
     token_b = user_b["tokens"]["access_token"]
     id_a = user_a["user"]["id"]
+
+    res_me = client.patch(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json={"full_name": "  Updated User A  "},
+    )
+    assert res_me.status_code == 200
+    assert res_me.json()["full_name"] == "Updated User A"
 
     res_patch_user = client.patch(
         f"/api/v1/users/{id_a}",
@@ -186,25 +266,34 @@ def test_member_cannot_modify_or_delete_other_user_or_task_403(client: TestClien
 
 
 def test_admin_protections_and_password_72_bytes_limit(client: TestClient):
-    admin_id = _create_admin()
-    login_admin = client.post(
+    admin1_id = _seed_user(email="admin1@example.com")
+    _seed_user(email="admin2@example.com")
+
+    login_admin1 = client.post(
         "/api/v1/auth/login",
-        json={"email": "admin@example.com", "password": "AdminPass123!"},
+        json={"email": "admin1@example.com", "password": "AdminPass123!"},
     )
-    admin_token = login_admin.json()["access_token"]
+    admin1_token = login_admin1.json()["access_token"]
 
     res_self_del = client.delete(
-        f"/api/v1/users/{admin_id}",
-        headers={"Authorization": f"Bearer {admin_token}"},
+        f"/api/v1/users/{admin1_id}",
+        headers={"Authorization": f"Bearer {admin1_token}"},
     )
     assert res_self_del.status_code == 400
 
-    res_demote_last_admin = client.patch(
-        f"/api/v1/users/{admin_id}",
-        headers={"Authorization": f"Bearer {admin_token}"},
+    res_self_demote = client.patch(
+        f"/api/v1/users/{admin1_id}",
+        headers={"Authorization": f"Bearer {admin1_token}"},
         json={"role": "MEMBER"},
     )
-    assert res_demote_last_admin.status_code == 400
+    assert res_self_demote.status_code == 400
+
+    res_self_lock = client.patch(
+        f"/api/v1/users/{admin1_id}",
+        headers={"Authorization": f"Bearer {admin1_token}"},
+        json={"is_active": False},
+    )
+    assert res_self_lock.status_code == 400
 
     multibyte_password = "ắ" * 40
     res_72_bytes = client.post(
