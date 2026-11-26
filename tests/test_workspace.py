@@ -80,6 +80,13 @@ def test_workspace_members_management_and_rbac(client: TestClient):
     )
     ws_id = ws_res.json()["id"]
 
+    res_add_owner_role = client.post(
+        f"/api/v1/workspaces/{ws_id}/members",
+        headers=owner_headers,
+        json={"user_id": member_id, "role": "OWNER"},
+    )
+    assert res_add_owner_role.status_code == 422
+
     res_add = client.post(
         f"/api/v1/workspaces/{ws_id}/members",
         headers=owner_headers,
@@ -122,12 +129,12 @@ def test_workspace_members_management_and_rbac(client: TestClient):
     assert res_promote.status_code == 200
     assert res_promote.json()["role"] == "EDITOR"
 
-    res_demote_owner = client.patch(
-        f"/api/v1/workspaces/{ws_id}/members/{owner_id}",
+    res_promote_to_owner = client.patch(
+        f"/api/v1/workspaces/{ws_id}/members/{member_id}",
         headers=owner_headers,
-        json={"role": "VIEWER"},
+        json={"role": "OWNER"},
     )
-    assert res_demote_owner.status_code == 400
+    assert res_promote_to_owner.status_code == 422
 
     res_remove_owner = client.delete(
         f"/api/v1/workspaces/{ws_id}/members/{owner_id}",

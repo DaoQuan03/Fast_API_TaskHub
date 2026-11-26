@@ -1,3 +1,5 @@
+from app.models.enums import WorkspaceRole
+
 TASK_TITLE_MIN_LENGTH = 1
 TASK_TITLE_MAX_LENGTH = 255
 
@@ -23,3 +25,14 @@ DUMMY_PASSWORD_HASH = "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga3
 DEFAULT_PAGE = 1
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
+
+WORKSPACE_READ_ROLES: frozenset[WorkspaceRole] = frozenset(
+    {WorkspaceRole.OWNER, WorkspaceRole.EDITOR, WorkspaceRole.VIEWER}
+)
+WORKSPACE_WRITE_ROLES: frozenset[WorkspaceRole] = frozenset(
+    {WorkspaceRole.OWNER, WorkspaceRole.EDITOR}
+)
+WORKSPACE_OWNER_ROLES: frozenset[WorkspaceRole] = frozenset({WorkspaceRole.OWNER})
+WORKSPACE_ASSIGNABLE_ROLES: frozenset[WorkspaceRole] = frozenset(
+    {WorkspaceRole.EDITOR, WorkspaceRole.VIEWER}
+)

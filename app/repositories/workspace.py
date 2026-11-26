@@ -4,11 +4,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import DEFAULT_LIMIT, DEFAULT_PAGE
 from app.core.database import get_db
 from app.core.exceptions import ConflictException
-from app.core.messages import WORKSPACE_MEMBER_ALREADY_EXISTS
-from app.models.enums import WorkspaceRole
+from app.core.messages import LABEL_ALREADY_EXISTS, WORKSPACE_MEMBER_ALREADY_EXISTS
+from app.dependencies import PaginationParams
+from app.models.enums import ProjectStatus, WorkspaceRole
+from app.models.label import Label
+from app.models.project import Project
 from app.models.user import User
 from app.models.workspace import Workspace, WorkspaceMember
 from app.repositories.base import BaseRepository
@@ -37,9 +39,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
     async def get_multi_for_user(
         self,
         user_id: int,
-        *,
-        page: int = DEFAULT_PAGE,
-        limit: int = DEFAULT_LIMIT,
+        pagination: PaginationParams,
     ) -> tuple[list[Workspace], int]:
         base_filter = (
             select(Workspace)
@@ -55,8 +55,8 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         total = await self.session.scalar(count_stmt)
         stmt = (
             base_filter.order_by(Workspace.created_at.asc(), Workspace.id.asc())
-            .offset((page - 1) * limit)
-            .limit(limit)
+            .offset(pagination.offset)
+            .limit(pagination.limit)
         )
         result = await self.session.scalars(stmt)
         return list(result.all()), total or 0
@@ -78,6 +78,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
     async def list_members(
         self,
         workspace_id: int,
+        pagination: PaginationParams,
     ) -> tuple[list[WorkspaceMember], int]:
         count_stmt = (
             select(func.count())
@@ -89,6 +90,8 @@ class WorkspaceRepository(BaseRepository[Workspace]):
             select(WorkspaceMember)
             .where(WorkspaceMember.workspace_id == workspace_id)
             .order_by(WorkspaceMember.user_id.asc())
+            .offset(pagination.offset)
+            .limit(pagination.limit)
         )
         result = await self.session.scalars(stmt)
         return list(result.all()), total or 0
@@ -124,6 +127,128 @@ class WorkspaceRepository(BaseRepository[Workspace]):
 
     async def remove_member(self, member: WorkspaceMember) -> None:
         await self.session.delete(member)
+        await self.session.flush()
+
+    async def create_project(
+        self,
+        *,
+        workspace_id: int,
+        name: str,
+        description: str | None = None,
+    ) -> Project:
+        project = Project(
+            workspace_id=workspace_id,
+            name=name,
+            description=description,
+            status=ProjectStatus.ACTIVE,
+        )
+        self.session.add(project)
+        await self.session.flush()
+        await self.session.refresh(project)
+        return project
+
+    async def list_projects(
+        self,
+        workspace_id: int,
+        pagination: PaginationParams,
+    ) -> tuple[list[Project], int]:
+        count_stmt = (
+            select(func.count())
+            .select_from(Project)
+            .where(Project.workspace_id == workspace_id)
+        )
+        total = await self.session.scalar(count_stmt)
+        stmt = (
+            select(Project)
+            .where(Project.workspace_id == workspace_id)
+            .order_by(Project.created_at.asc(), Project.id.asc())
+            .offset(pagination.offset)
+            .limit(pagination.limit)
+        )
+        result = await self.session.scalars(stmt)
+        return list(result.all()), total or 0
+
+    async def update_project(
+        self,
+        project: Project,
+        data: dict[str, object],
+    ) -> Project:
+        for field, value in data.items():
+            setattr(project, field, value)
+        await self.session.flush()
+        await self.session.refresh(project)
+        return project
+
+    async def delete_project(self, project: Project) -> None:
+        await self.session.delete(project)
+        await self.session.flush()
+
+    async def create_label(
+        self,
+        *,
+        project_id: int,
+        name: str,
+        color: str,
+    ) -> Label:
+        label = Label(project_id=project_id, name=name, color=color)
+        self.session.add(label)
+        try:
+            await self.session.flush()
+            await self.session.refresh(label)
+            return label
+        except IntegrityError:
+            await self.session.rollback()
+            raise ConflictException(LABEL_ALREADY_EXISTS)
+
+    async def list_labels(
+        self,
+        project_id: int,
+        pagination: PaginationParams,
+    ) -> tuple[list[Label], int]:
+        count_stmt = (
+            select(func.count())
+            .select_from(Label)
+            .where(Label.project_id == project_id)
+        )
+        total = await self.session.scalar(count_stmt)
+        stmt = (
+            select(Label)
+            .where(Label.project_id == project_id)
+            .order_by(Label.id.asc())
+            .offset(pagination.offset)
+            .limit(pagination.limit)
+        )
+        result = await self.session.scalars(stmt)
+        return list(result.all()), total or 0
+
+    async def get_label_in_project(
+        self,
+        project_id: int,
+        label_id: int,
+    ) -> Label | None:
+        stmt = select(Label).where(
+            Label.id == label_id,
+            Label.project_id == project_id,
+        )
+        return await self.session.scalar(stmt)
+
+    async def update_label(
+        self,
+        label: Label,
+        data: dict[str, object],
+    ) -> Label:
+        for field, value in data.items():
+            setattr(label, field, value)
+        try:
+            await self.session.flush()
+            await self.session.refresh(label)
+            return label
+        except IntegrityError:
+            await self.session.rollback()
+            raise ConflictException(LABEL_ALREADY_EXISTS)
+
+    async def delete_label(self, label: Label) -> None:
+        await self.session.delete(label)
         await self.session.flush()
 
 

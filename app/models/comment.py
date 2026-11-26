@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import DateTime, ForeignKey, Integer, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, utc_now
@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
 class Comment(Base):
     __tablename__ = "comments"
+    __table_args__ = (
+        Index("ix_comments_task_created_at", "task_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_id: Mapped[int] = mapped_column(
@@ -25,6 +28,5 @@ class Comment(Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
 
-    # Relationships
     task: Mapped["Task"] = relationship("Task", back_populates="comments")
     author: Mapped["User"] = relationship("User", back_populates="comments")

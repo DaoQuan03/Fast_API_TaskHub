@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import TASK_TITLE_MAX_LENGTH
@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_project_status", "project_id", "status"),
+        Index("ix_tasks_project_priority", "project_id", "priority"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int | None] = mapped_column(
@@ -44,7 +48,6 @@ class Task(Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
 
-    # Relationships
     project: Mapped["Project | None"] = relationship("Project", back_populates="tasks")
     assignee: Mapped["User | None"] = relationship(
         "User", foreign_keys=[assignee_id], back_populates="assigned_tasks"
@@ -53,8 +56,14 @@ class Task(Base):
         "User", foreign_keys=[created_by], back_populates="created_tasks"
     )
     labels: Mapped[list["Label"]] = relationship(
-        "Label", secondary="task_labels", back_populates="tasks"
+        "Label",
+        secondary="task_labels",
+        back_populates="tasks",
+        passive_deletes=True,
     )
     comments: Mapped[list["Comment"]] = relationship(
-        "Comment", back_populates="task", cascade="all, delete-orphan"
+        "Comment",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
