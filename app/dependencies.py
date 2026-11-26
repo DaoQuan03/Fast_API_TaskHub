@@ -17,13 +17,14 @@ from app.core.messages import (
     INVALID_OR_EXPIRED_TOKEN,
     PERMISSION_DENIED,
     TASK_NOT_FOUND,
+    WORKSPACE_NOT_FOUND,
     WORKSPACE_PERMISSION_DENIED,
 )
 from app.core.security import decode_token
 from app.models.enums import TokenType, UserRole, WorkspaceRole
 from app.models.task import Task
 from app.models.user import User
-from app.models.workspace import WorkspaceMember
+from app.models.workspace import Workspace, WorkspaceMember
 from app.repositories.task import TaskRepository, get_task_repository
 
 http_bearer = HTTPBearer(auto_error=False)
@@ -100,13 +101,40 @@ def require_workspace_roles(
         current_user: CurrentUserDep,
         session: DBSessionDep,
     ) -> WorkspaceMember:
+        workspace = await session.get(Workspace, workspace_id)
+        if not workspace:
+            raise NotFoundException(
+                WORKSPACE_NOT_FOUND.format(workspace_id=workspace_id)
+            )
         stmt = select(WorkspaceMember).where(
             WorkspaceMember.workspace_id == workspace_id,
             WorkspaceMember.user_id == current_user.id,
         )
         member = await session.scalar(stmt)
+        if current_user.role == UserRole.ADMIN and not member:
+            return WorkspaceMember(
+                workspace_id=workspace_id,
+                user_id=current_user.id,
+                role=WorkspaceRole.OWNER,
+            )
         if not member or member.role not in allowed_roles:
             raise ForbiddenException(WORKSPACE_PERMISSION_DENIED)
         return member
 
     return workspace_role_checker
+
+
+WorkspaceMemberViewDep = Annotated[
+    WorkspaceMember,
+    Depends(
+        require_workspace_roles(
+            WorkspaceRole.OWNER,
+            WorkspaceRole.EDITOR,
+            WorkspaceRole.VIEWER,
+        )
+    ),
+]
+WorkspaceOwnerDep = Annotated[
+    WorkspaceMember,
+    Depends(require_workspace_roles(WorkspaceRole.OWNER)),
+]
